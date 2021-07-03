@@ -1,4 +1,4 @@
-﻿using System.Collections;
+﻿using System.Collections;   // コルーチンを使うため
 using UnityEngine;
 using UnityEngine.UI;
 

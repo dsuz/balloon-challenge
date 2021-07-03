@@ -23,7 +23,7 @@ public class BalloonController : MonoBehaviour
         // 膨らませる
         float scale = capacityRatio * m_maxScale;
         scale = Mathf.Max(scale, 1f);
-        this.transform.DOScale(scale, 0.5f);
+        this.transform.DOScale(scale, 0.5f).SetLink(this.gameObject);
         // 揺らす
         Shake(capacityRatio);
     }
@@ -37,8 +37,8 @@ public class BalloonController : MonoBehaviour
     {
         // ここの数値設定は適当かつハードコードされているので、後で適切に直す。
         int strength = Mathf.RoundToInt(10 * capacityRatio);
-        this.transform.DOShakePosition(10, strength: 0.1f, vibrato: strength, fadeOut: false).SetLoops(-1);
-        this.transform.DOShakeRotation(10, strength: strength, vibrato: strength, fadeOut: false).SetLoops(-1);
+        this.transform.DOShakePosition(10, strength: 0.1f, vibrato: strength, fadeOut: false).SetLoops(-1).SetLink(this.gameObject);
+        this.transform.DOShakeRotation(10, strength: strength, vibrato: strength, fadeOut: false).SetLoops(-1).SetLink(this.gameObject);
     }
 
     /// <summary>
