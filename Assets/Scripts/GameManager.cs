@@ -1,5 +1,6 @@
 ﻿using System;   // Array.ForEach を使うため
 using UnityEngine;
+using DG.Tweening;  // DOTween を使うため
 // Photon 用の名前空間を参照する
 using Photon.Pun;
 using Photon.Pun.UtilityScripts;    // PunTurnManager, IPunTurnManagerCallbacks を使うため
@@ -134,8 +135,8 @@ public class GameManager : MonoBehaviourPunCallbacks, IPunTurnManagerCallbacks, 
     void PitchBgm(float capacityRatio)
     {
         float pitch = capacityRatio * m_maxBgmPitch;
-        pitch = Mathf.Max(pitch, 1f);
-        m_bgm.pitch = pitch;
+        pitch = Mathf.Max(pitch, 1);
+        m_bgm.DOPitch(pitch, 1); // duration は適当に設定した（ハードコードするのはよろしくない）
     }
 
     /// <summary>
