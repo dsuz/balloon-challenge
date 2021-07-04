@@ -1,5 +1,5 @@
 ﻿using UnityEngine;
-using DG.Tweening;
+using DG.Tweening;  // DOTween を使うため
 
 /// <summary>
 /// バルーンの動きを制御するコンポーネント。
