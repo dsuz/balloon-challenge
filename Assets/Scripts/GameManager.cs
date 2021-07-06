@@ -4,14 +4,13 @@ using DG.Tweening;  // DOTween を使うため
 // Photon 用の名前空間を参照する
 using Photon.Pun;
 using Photon.Pun.UtilityScripts;    // PunTurnManager, IPunTurnManagerCallbacks を使うため
-using Photon.Realtime;  // IOnEventCallback を使うため
-using ExitGames.Client.Photon;  // EventData, SendOptions を使うため
+using Photon.Realtime;
 
 /// <summary>
 /// ゲームを管理するコンポーネント。
 /// 適当なオブジェクトにアタッチして使う。
 /// </summary>
-public class GameManager : MonoBehaviourPunCallbacks, IPunTurnManagerCallbacks, IOnEventCallback
+public class GameManager : MonoBehaviourPunCallbacks, IPunTurnManagerCallbacks
 {
     /// <summary>ランダムで決定されるキャパシティの最大値</summary>
     [SerializeField] float m_maxCapacity = 120;
@@ -45,7 +44,7 @@ public class GameManager : MonoBehaviourPunCallbacks, IPunTurnManagerCallbacks, 
     void Start()
     {
         // 最初は操作パネルを消しておく
-        Array.ForEach(m_myControllerObjects, (e) => e.SetActive(false));
+        Array.ForEach(m_myControllerObjects, e => e.SetActive(false));
     }
 
     public void Listen()
@@ -61,19 +60,18 @@ public class GameManager : MonoBehaviourPunCallbacks, IPunTurnManagerCallbacks, 
     }
 
     /// <summary>
-    /// 初期化（キャパシティの決定を）する。Master クライアントから呼ばれ、イベントにより全員に決定したキャパシティを通知する。
+    /// 初期化（キャパシティの決定を）する。Master クライアントから呼ばれ、決定したキャパシティを通知する。
     /// </summary>
     void InitCapacity()
     {
         float capacity = UnityEngine.Random.Range(m_minCapacity, m_maxCapacity);
-        RaiseEventOptions raiseEventOptions = new RaiseEventOptions { Receivers = ReceiverGroup.All };
-        SendOptions sendOptions = new SendOptions();
-        PhotonNetwork.RaiseEvent(Consts.SetCapacity, capacity, raiseEventOptions, sendOptions);
+        // 決定した風船の容量を SendMove で全員に通知する
+        MoveData moveData = new MoveData(MoveType.SetCapacity, capacity);
+        m_turnManager.SendMove(JsonUtility.ToJson(moveData) , false);
     }
 
     /// <summary>
     /// ゲームを初期化して許容量をセットし、空気の量をゼロにする
-    /// Consts.SetCapacity イベントを受け取って呼ばれる
     /// </summary>
     /// <param name="capacity"></param>
     void InitGame(float capacity)
@@ -89,26 +87,28 @@ public class GameManager : MonoBehaviourPunCallbacks, IPunTurnManagerCallbacks, 
     /// <param name="blow">送り込む空気の量</param>
     public void Pump(float blow)
     {
-        RaiseEventOptions raiseEventOptions = new RaiseEventOptions { Receivers = ReceiverGroup.All };
-        SendOptions sendOptions = new SendOptions();
-        PhotonNetwork.RaiseEvent(Consts.Pump, blow, raiseEventOptions, sendOptions);
-
         // 割れたかどうか判定する
         if (m_blowAmount + blow > m_capacity)
         {
+            Debug.Log("Baloon cracked.");
             // 割れたら操作パネルを消す
             Array.ForEach(m_myControllerObjects, e => e.SetActive(false));
+            // 割ってしまったことを通知する
+            MoveData moveData = new MoveData(MoveType.Crack, blow);
+            m_turnManager.SendMove(JsonUtility.ToJson(moveData), false);    // 自分の番は Finish しない（ゲームは終わりで、それをしなくていいから）
         }
         else
         {
+            Debug.Log("Baloon is safe. Move to next player.");
             // 割れなかったら次のプレイヤーに操作を移す (move)
-            m_turnManager.SendMove(null, true);
+            MoveData moveData = new MoveData(MoveType.Blow, blow);
+            m_turnManager.SendMove(JsonUtility.ToJson(moveData), true);
         }
     }
 
     /// <summary>
     /// 風船に空気を送り込む
-    /// Consts.Pump イベントを受け取って呼ばれる
+    /// PunTurnManager からイベントを受け取って呼ばれる
     /// </summary>
     /// <param name="blow">送り込む空気の量</param>
     void OnPump(float blow)
@@ -118,13 +118,40 @@ public class GameManager : MonoBehaviourPunCallbacks, IPunTurnManagerCallbacks, 
         Debug.Log($"Pumped. Current / Max: {m_blowAmount} / {m_capacity}, {(int)(capacityRatio * 100)} %");
         m_balloon.PumpUp(capacityRatio);
         PitchBgm(capacityRatio);
+    }
 
-        // 割れたかどうか判定する
-        if (m_blowAmount > m_capacity)
+    /// <summary>
+    /// 風船を割った時に呼ばれる
+    /// </summary>
+    /// <param name="playerActorNumber">風船を割ったプレイヤーの ActorNumber</param>
+    void OnCrack(int playerActorNumber)
+    {
+        m_bgm.Stop();
+        m_balloon.Crack();
+        Debug.Log($"Player {playerActorNumber} cracked balloon.");
+    }
+
+    /// <summary>
+    /// Move/Finish で送られてくる情報を処理する
+    /// </summary>
+    /// <param name="moveData">送られてきたデータ</param>
+    /// <param name="playerActorNumber">データを送ってきたプレイヤーの ActorNumber</param>
+    void OnMoveOrFinish(MoveData moveData, int playerActorNumber)
+    {
+        switch (moveData.MoveType)
         {
-            m_bgm.Stop();
-            m_balloon.Crack();
-            Debug.Log($"Player {this.ActivePlayer.ActorNumber} cracked balloon.");
+            case MoveType.SetCapacity:
+                InitGame(moveData.Value);
+                break;
+            case MoveType.Blow:
+                OnPump(moveData.Value);
+                break;
+            case MoveType.Crack:
+                OnCrack(playerActorNumber);
+                break;
+            default:
+                Debug.LogError($"Unknown MoveType: {moveData.MoveType.ToString()}");
+                break;
         }
     }
 
@@ -148,29 +175,10 @@ public class GameManager : MonoBehaviourPunCallbacks, IPunTurnManagerCallbacks, 
         Debug.Log($"Active player changed to {PhotonNetwork.PlayerList[m_activePlayerIndex].ActorNumber}");
     }
 
-    #region IOnEventCallback の実装
-    void IOnEventCallback.OnEvent(EventData e)
-    {
-        switch (e.Code)
-        {
-            case Consts.SetCapacity:
-                float capacity = (float) e.CustomData;
-                Debug.Log($"SetCapacity event received with capacity: {capacity}");
-                InitGame(capacity);
-                break;
-            case Consts.Pump:
-                float blow = (float)e.CustomData;
-                Debug.Log($"Pump event received with blow: {blow}");
-                OnPump(blow);
-                break;
-        }
-    }
-    #endregion
-
     #region IPunTurnManagerCallbacks の実装
     void IPunTurnManagerCallbacks.OnTurnBegins(int turn)
     {
-        Debug.Log("Enter OnTurnBegins.");
+        Debug.Log($"Enter OnTurnBegins. turn: {turn}");
         m_activePlayerIndex = 0;    // 最初のプレイヤーからターンを始める
         bool controllerVisibleFlag = false;
 
@@ -186,15 +194,19 @@ public class GameManager : MonoBehaviourPunCallbacks, IPunTurnManagerCallbacks, 
 
     void IPunTurnManagerCallbacks.OnPlayerMove(Player player, int turn, object move)
     {
-        Debug.Log("Enter OnPlayerMove.");
+        string json = (string)move;
+        Debug.Log($"Enter OnPlayerMove. player: {player.ActorNumber}, turn: {turn}, move: {json}");
+        OnMoveOrFinish(JsonUtility.FromJson<MoveData>(json), player.ActorNumber);
     }
 
     void IPunTurnManagerCallbacks.OnPlayerFinished(Player player, int turn, object move)
     {
-        Debug.Log("Enter OnPlayerFinished.");
+        string json = (string)move;
+        Debug.Log($"Enter OnPlayerFinished. player: {player.ActorNumber}, turn: {turn}, move: {json}");
+        OnMoveOrFinish(JsonUtility.FromJson<MoveData>(json), player.ActorNumber);
         MoveToNextPlayer();
 
-        // 全員が終わっている場合は何もせず、続きの処理は OnTurnCompleted に任せる。まだ順番を終わらせていないプレイヤーが居る場合は、順番が周ってきているプレイヤーに操作をさせる
+        // 全員が終わっている場合は何もせず、続きの処理は OnTurnCompleted に任せる。まだ順番を終わらせていないプレイヤーがいる場合は、順番が周ってきているプレイヤーに操作をさせる
         if (!m_turnManager.IsCompletedByAll)
         {
             // 自分の番なら操作パネルを出す
@@ -213,7 +225,7 @@ public class GameManager : MonoBehaviourPunCallbacks, IPunTurnManagerCallbacks, 
 
     void IPunTurnManagerCallbacks.OnTurnCompleted(int turn)
     {
-        Debug.Log("Enter OnTurnCompleted.");
+        Debug.Log($"Enter OnTurnCompleted. turn: {turn}");
 
         if (PhotonNetwork.IsMasterClient)
         {
@@ -224,7 +236,7 @@ public class GameManager : MonoBehaviourPunCallbacks, IPunTurnManagerCallbacks, 
 
     void IPunTurnManagerCallbacks.OnTurnTimeEnds(int turn)
     {
-        Debug.Log("Enter OnTurnTimeEnds.");
+        Debug.Log($"Enter OnTurnTimeEnds. turn: {turn}");
     }
     #endregion
 }
